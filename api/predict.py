@@ -19,7 +19,10 @@ import base64
 import io
 import json
 import os
+import shutil
+import tempfile
 import threading
+import urllib.request
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -49,6 +52,47 @@ _STATE = None
 _LOCK = threading.Lock()
 
 
+def detector_path():
+    """Where joint_detector.onnx is.
+
+    Normally it sits in models/ next to the classifier. If it is too large for GitHub, leave it out of the
+    repository, host it anywhere that gives a direct https link (for example a free Hugging Face model repo),
+    and set the environment variable RA_DETECTOR_URL to that link in the Vercel project settings.
+    The file is then downloaded once per server instance into the temporary folder.
+    """
+    local = MODELS_DIR / "joint_detector.onnx"
+    if local.is_file():
+        return local
+    url = os.environ.get("RA_DETECTOR_URL", "").strip()
+    if not url:
+        raise ModelsMissing("Model files not found in /models: joint_detector.onnx "
+                            "(or set RA_DETECTOR_URL to a download link for it)")
+    if not url.startswith("https://"):
+        raise ModelsMissing("RA_DETECTOR_URL must start with https://")
+    cached = Path(os.environ.get("RA_DOWNLOAD_DIR", tempfile.gettempdir())) / "ra_models" / "joint_detector.onnx"
+    if cached.is_file() and cached.stat().st_size > 1_000_000:
+        return cached
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    part = cached.with_name("joint_detector.onnx.part")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ra-severity-grading"})
+        with urllib.request.urlopen(req, timeout=60) as resp, open(part, "wb") as out:
+            shutil.copyfileobj(resp, out, 1 << 20)
+        if part.stat().st_size <= 1_000_000:
+            raise ModelsMissing("The downloaded detector file is too small. Check that RA_DETECTOR_URL is a "
+                                "direct link to joint_detector.onnx.")
+        part.replace(cached)
+    except ModelsMissing:
+        raise
+    except Exception as exc:
+        raise ModelsMissing("Could not download the joint detector from RA_DETECTOR_URL (" +
+                            type(exc).__name__ + ").") from exc
+    finally:
+        if part.exists():
+            part.unlink()
+    return cached
+
+
 def load_models():
     """Load the config and both ONNX sessions once per server instance."""
     global _STATE
@@ -56,16 +100,17 @@ def load_models():
         return _STATE
     with _LOCK:
         if _STATE is None:
-            names = ("config.json", "classifier.onnx", "joint_detector.onnx")
+            names = ("config.json", "classifier.onnx")
             missing = [n for n in names if not (MODELS_DIR / n).is_file()]
             if missing:
                 raise ModelsMissing("Model files not found in /models: " + ", ".join(missing))
+            det_file = detector_path()
             cfg = json.loads((MODELS_DIR / "config.json").read_text())
             opts = ort.SessionOptions()
             opts.intra_op_num_threads = int(os.environ.get("ORT_THREADS", "1"))
             providers = ["CPUExecutionProvider"]
             clf = ort.InferenceSession(str(MODELS_DIR / "classifier.onnx"), opts, providers=providers)
-            det = ort.InferenceSession(str(MODELS_DIR / "joint_detector.onnx"), opts, providers=providers)
+            det = ort.InferenceSession(str(det_file), opts, providers=providers)
             _STATE = {"cfg": cfg, "clf": clf, "det": det}
     return _STATE
 
@@ -341,8 +386,12 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        present = all((MODELS_DIR / n).is_file() for n in ("config.json", "classifier.onnx", "joint_detector.onnx"))
-        self._send(200, {"status": "ok", "models_present": present, "models_loaded": _STATE is not None})
+        core = all((MODELS_DIR / n).is_file() for n in ("config.json", "classifier.onnx"))
+        local_det = (MODELS_DIR / "joint_detector.onnx").is_file()
+        det_url = os.environ.get("RA_DETECTOR_URL", "").strip().startswith("https://")
+        self._send(200, {"status": "ok", "models_present": core and (local_det or det_url),
+                         "detector_source": "repo" if local_det else ("download" if det_url else "missing"),
+                         "models_loaded": _STATE is not None})
 
     def do_POST(self):
         try:
