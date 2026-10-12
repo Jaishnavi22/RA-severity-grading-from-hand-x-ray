@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RA Severity Grading from Hand X-rays</title>
+<meta name="description" content="Research prototype: grades rheumatoid arthritis severity (Mild, Moderate, Severe) from a hand radiograph and shows where the model looked.">
+<style>
+:root {
+  --bg: #f6f7f4;
+  --card: #ffffff;
+  --ink: #1d2433;
+  --muted: #5b6475;
+  --line: #d9dde3;
+  --accent: #1f5f8b;
+  --accent-ink: #ffffff;
+  --ok: #17663a;
+  --ok-bg: #e3f3ea;
+  --warn: #8a4b00;
+  --warn-bg: #fdecd2;
+  --bar: #1f5f8b;
+  --bar-top: #c4540a;
+  --shadow: 0 1px 2px rgba(20, 30, 50, .06), 0 4px 14px rgba(20, 30, 50, .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #11151c; --card: #1a202b; --ink: #e9edf3; --muted: #a3adbd; --line: #2e3646;
+    --accent: #6fb4e3; --accent-ink: #0d1722; --ok: #7fd6a2; --ok-bg: #173325;
+    --warn: #f3b768; --warn-bg: #3a2a12; --bar: #6fb4e3; --bar-top: #f08a4b;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+main { max-width: 980px; margin: 0 auto; padding: 32px 16px 56px; }
+h1 { font-size: 1.7rem; line-height: 1.2; margin: 0 0 6px; }
+.sub { color: var(--muted); margin: 0 0 20px; max-width: 70ch; }
+.notice {
+  background: var(--warn-bg); color: var(--warn); border-radius: 10px;
+  padding: 10px 14px; margin: 0 0 20px; font-size: .95rem;
+}
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); }
+.drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center;
+}
+.drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.drop p { margin: 0; color: var(--muted); }
+button, .btn {
+  font: inherit; font-weight: 600; cursor: pointer; border: 0; border-radius: 10px;
+  background: var(--accent); color: var(--accent-ink); padding: 11px 20px; min-height: 44px;
+}
+button:focus-visible, .btn:focus-visible, input:focus-visible + .btn { outline: 3px solid var(--ink); outline-offset: 2px; }
+input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+#status { margin: 16px 0 0; color: var(--muted); min-height: 1.5em; }
+#status.error { color: #b3261e; font-weight: 600; }
+@media (prefers-color-scheme: dark) { #status.error { color: #ff8a80; } }
+#result[hidden] { display: none; }
+#result { margin-top: 24px; display: grid; gap: 18px; }
+.summary { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.grade { font-size: 2rem; font-weight: 700; line-height: 1.1; }
+.badge { border-radius: 999px; padding: 4px 12px; font-size: .9rem; font-weight: 700; }
+.badge.answered { background: var(--ok-bg); color: var(--ok); }
+.badge.deferred { background: var(--warn-bg); color: var(--warn); }
+.hint { margin: 8px 0 0; color: var(--muted); font-size: .95rem; }
+.probs { display: grid; gap: 8px; margin-top: 14px; }
+.prow { display: grid; grid-template-columns: 90px 1fr 56px; gap: 10px; align-items: center; font-size: .95rem; }
+.track { height: 12px; background: var(--line); border-radius: 6px; overflow: hidden; }
+.fill { height: 100%; background: var(--bar); border-radius: 6px; }
+.prow.top .fill { background: var(--bar-top); }
+.prow .pct { text-align: right; font-variant-numeric: tabular-nums; }
+.figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+figure { margin: 0; }
+figure img { width: 100%; height: auto; display: block; border-radius: 10px; background: #000; }
+figcaption { font-size: .88rem; color: var(--muted); margin-top: 6px; }
+ul.notes { margin: 0; padding-left: 20px; color: var(--warn); }
+.small { font-size: .88rem; color: var(--muted); }
+#preview { max-width: 100%; max-height: 220px; border-radius: 10px; margin-top: 8px; }
+#preview[hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>RA severity grading from hand X-rays</h1>
+  <p class="sub">Upload a hand or wrist radiograph. The model finds the joints, crops the hand, grades rheumatoid arthritis severity as Mild, Moderate or Severe, and shows where it looked. Uncertain cases are deferred to a clinician instead of being given a forced grade.</p>
+  <p class="notice" role="note"><strong>Research prototype, not a medical device.</strong> The grade must be confirmed by a clinician. The model was trained on rheumatoid arthritis images only, so it does not detect normal hands.</p>
+
+  <section class="card" aria-labelledby="up-h">
+    <h2 id="up-h" class="small" style="margin:0 0 10px;font-weight:600">1. Choose an X-ray image (JPEG or PNG)</h2>
+    <div class="drop" id="drop">
+      <p>Drag and drop an image here, or</p>
+      <label>
+        <input type="file" id="file" accept="image/jpeg,image/png,image/bmp,image/tiff">
+        <span class="btn">Choose image</span>
+      </label>
+      <img id="preview" alt="Preview of the selected X-ray" hidden>
+    </div>
+    <p id="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section id="result" hidden aria-labelledby="res-h">
+    <div class="card">
+      <h2 id="res-h" class="small" style="margin:0 0 8px;font-weight:600">2. Result</h2>
+      <div class="summary">
+        <div class="grade" id="grade"></div>
+        <span class="badge" id="decision"></span>
+      </div>
+      <p class="hint" id="decision-hint"></p>
+      <div class="probs" id="probs" aria-label="Grade probabilities"></div>
+      <ul class="notes" id="notes"></ul>
+    </div>
+    <div class="card">
+      <h2 class="small" style="margin:0 0 10px;font-weight:600">3. What the pipeline did</h2>
+      <div class="figs">
+        <figure><img id="img-joints" alt="X-ray after CLAHE with detected joints in red and the hand region in green"><figcaption>YOLO joints (red) and hand region (green) on the contrast-enhanced image</figcaption></figure>
+        <figure><img id="img-roi" alt="Cropped hand region"><figcaption>Hand region passed to the classifier</figcaption></figure>
+        <figure><img id="img-heat" alt="Grad-CAM++ heat-map over the cropped hand region"><figcaption>Grad-CAM++: where the model looked (red = high attention)</figcaption></figure>
+      </div>
+    </div>
+    <p class="small" id="disclaimer"></p>
+  </section>
+  <p class="small" style="margin-top:28px">Images are processed in memory for this request and are not saved by this app.</p>
+</main>
+
+<script>
+(function () {
+  var MAX_BYTES = 4000000;          // Vercel limits a request body to 4.5 MB
+  var fileInput = document.getElementById("file");
+  var drop = document.getElementById("drop");
+  var statusEl = document.getElementById("status");
+  var preview = document.getElementById("preview");
+  var result = document.getElementById("result");
+
+  function setStatus(msg, isError) {
+    statusEl.textContent = msg || "";
+    statusEl.className = isError ? "error" : "";
+  }
+
+  // Shrinks only when the file is too big for the request limit.
+  function fitToLimit(file) {
+    if (file.size <= MAX_BYTES) return Promise.resolve({ blob: file, resized: false });
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        var side = 2000, quality = 0.92, tries = 0;
+        (function attempt() {
+          var s = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
+          var c = document.createElement("canvas");
+          c.width = Math.round(img.naturalWidth * s);
+          c.height = Math.round(img.naturalHeight * s);
+          c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+          c.toBlob(function (blob) {
+            if (blob && (blob.size <= MAX_BYTES || tries >= 5)) {
+              URL.revokeObjectURL(url);
+              return blob.size <= MAX_BYTES ? resolve({ blob: blob, resized: true }) : reject(new Error("too big"));
+            }
+            tries += 1; side *= 0.8; quality = Math.max(0.7, quality - 0.05); attempt();
+          }, "image/jpeg", quality);
+        })();
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("unreadable")); };
+      img.src = url;
+    });
+  }
+
+  function render(r, resized) {
+    document.getElementById("grade").textContent = r.grade + " (" + Math.round(r.confidence * 100) + "%)";
+    var dec = document.getElementById("decision");
+    var hint = document.getElementById("decision-hint");
+    if (r.decision === "ANSWERED") {
+      dec.textContent = "Answered"; dec.className = "badge answered";
+      hint.textContent = "Only one grade is plausible at the calibrated confidence level.";
+    } else {
+      dec.textContent = "Deferred to clinician"; dec.className = "badge deferred";
+      hint.textContent = "The model is not sure enough to give a single grade. Plausible grades: " +
+        (r.plausible_grades.length ? r.plausible_grades.join(", ") : "none") + ". A clinician should grade this image.";
+    }
+    var probs = document.getElementById("probs");
+    probs.textContent = "";
+    Object.keys(r.probabilities).forEach(function (name) {
+      var p = r.probabilities[name];
+      var row = document.createElement("div");
+      row.className = "prow" + (name === r.grade ? " top" : "");
+      var l = document.createElement("span"); l.textContent = name;
+      var t = document.createElement("div"); t.className = "track";
+      var f = document.createElement("div"); f.className = "fill"; f.style.width = (p * 100).toFixed(1) + "%";
+      t.appendChild(f);
+      var v = document.createElement("span"); v.className = "pct"; v.textContent = (p * 100).toFixed(1) + "%";
+      row.appendChild(l); row.appendChild(t); row.appendChild(v);
+      probs.appendChild(row);
+    });
+    var notes = document.getElementById("notes");
+    notes.textContent = "";
+    var all = r.notes.slice();
+    if (resized) all.push("The image was larger than the upload limit, so it was shrunk before grading.");
+    all.forEach(function (n) { var li = document.createElement("li"); li.textContent = n; notes.appendChild(li); });
+    document.getElementById("img-joints").src = r.images.joints;
+    document.getElementById("img-roi").src = r.images.roi;
+    document.getElementById("img-heat").src = r.images.heatmap;
+    document.getElementById("disclaimer").textContent = r.disclaimer;
+    result.hidden = false;
+    result.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function handle(file) {
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { setStatus("Please choose an image file.", true); return; }
+    result.hidden = true;
+    preview.src = URL.createObjectURL(file);
+    preview.hidden = false;
+    setStatus("Reading image...");
+    fitToLimit(file).then(function (res) {
+      setStatus("Grading... the first request after a quiet period can take 10 to 30 seconds while the models load.");
+      return fetch("/api/predict", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: res.blob })
+        .then(function (resp) {
+          return resp.json().then(function (j) { return { ok: resp.ok, body: j }; });
+        })
+        .then(function (out) {
+          if (!out.ok) throw new Error(out.body && out.body.error ? out.body.error : "Request failed.");
+          render(out.body, res.resized);
+          setStatus("Done.");
+        });
+    }).catch(function (e) {
+      setStatus(e.message === "too big" || e.message === "unreadable"
+        ? "This image could not be prepared for upload. Try a smaller JPEG." : "Error: " + e.message, true);
+    });
+  }
+
+  fileInput.addEventListener("change", function () { handle(fileInput.files[0]); fileInput.value = ""; });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("over"); });
+  });
+  drop.addEventListener("drop", function (e) { handle(e.dataTransfer.files[0]); });
+})();
+</script>
+</body>
+</html>
