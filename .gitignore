@@ -1,0 +1,25 @@
+# secrets and data: never commit these
+kaggle.json
+.kaggle/
+*.env
+.env*
+
+# training files (too large for GitHub; they stay on Google Drive)
+*.pth
+*.pt
+rheumatoid_arthritis/
+ra_preproc/
+ra_xray_checkpoints/
+ra_xray_results/
+ra_xray_processed/
+manual_uploads/
+
+# the exported deployment models in models/ ARE meant to be committed
+
+# python / tooling
+__pycache__/
+*.pyc
+.venv/
+.vercel/
+.ipynb_checkpoints/
+.DS_Store
